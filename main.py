@@ -7,7 +7,7 @@ from datetime import datetime
 # --- 配置项 ---
 SERVER_URL = "https://panel.godlike.host/server/d8419316"
 LOGIN_URL = "https://panel.godlike.host/auth/login"
-COOKIE_NAME = "remember_web_lSPbn54Rr2A7jpOT4TnsmZ6XOQsEQUz39ehj5nwe"
+COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 # 单次任务执行的超时时间（秒），依然保留以防单次运行卡死
 TASK_TIMEOUT_SECONDS = 300  # 5分钟
 
