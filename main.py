@@ -13,7 +13,7 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_API = "https://api.github.com"
 
 if not GITHUB_TOKEN:
-    raise RuntimeError("❌ 未检测到 GITHUB_TOKEN，请在 workflow 中注入 secrets.GITHUB_TOKEN")
+    raise RuntimeError("❌ 未检测到 GITHUB_TOKEN")
 
 # ================= 业务配置 =================
 SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
@@ -33,7 +33,7 @@ def screenshot(page, name):
     print(f"📸 截图完成: {path}", flush=True)
     return path
 
-# ================= GitHub API（urllib） =================
+# ================= GitHub API =================
 def github_post(url, payload):
     req = urllib.request.Request(
         url,
@@ -48,13 +48,15 @@ def github_post(url, payload):
     return urllib.request.urlopen(req)
 
 def create_release():
-    url = f"{GITHUB_API}/repos/{REPO}/releases"
-    with github_post(url, {
-        "tag_name": TAG,
-        "name": TAG,
-        "draft": False,
-        "prerelease": False,
-    }) as resp:
+    with github_post(
+        f"{GITHUB_API}/repos/{REPO}/releases",
+        {
+            "tag_name": TAG,
+            "name": TAG,
+            "draft": False,
+            "prerelease": False,
+        },
+    ) as resp:
         data = json.loads(resp.read().decode())
         return data["upload_url"].split("{")[0]
 
@@ -76,8 +78,15 @@ def upload_asset(upload_url, filepath):
 
     return f"https://github.com/{REPO}/releases/download/{TAG}/{name}"
 
-# ================= 抓 GitHub 临时下载 URL =================
+# ================= 关键：禁止重定向 =================
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+# ================= 获取 GitHub 内部临时 URL =================
 def download_via_github_signed(stable_url, out_path):
+    opener = urllib.request.build_opener(NoRedirect)
+
     req = urllib.request.Request(
         stable_url,
         headers={
@@ -87,8 +96,8 @@ def download_via_github_signed(stable_url, out_path):
     )
 
     try:
-        urllib.request.urlopen(req)
-        raise RuntimeError("未触发 GitHub 重定向，无法获取临时 URL")
+        opener.open(req)
+        raise RuntimeError("未捕获到 GitHub 重定向")
     except urllib.error.HTTPError as e:
         if e.code not in (301, 302):
             raise
