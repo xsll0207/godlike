@@ -45,14 +45,13 @@ def zip_screenshots():
             zf.write(os.path.join(SCREENSHOT_DIR, f), arcname=f)
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= 登录逻辑（仅账号密码） =================
+# ================= 登录逻辑（可见性修正版） =================
 def login_with_password(page):
     email = os.environ.get("PTERODACTYL_EMAIL")
     password = os.environ.get("PTERODACTYL_PASSWORD")
     if not email or not password:
         raise Exception("未提供账号密码")
 
-    # 先注入 cookie（如果有，能省一步）
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     if cookie:
         page.context.add_cookies([{
@@ -66,43 +65,75 @@ def login_with_password(page):
         }])
 
     page.goto(SERVER_URL, wait_until="networkidle")
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(3000)
     shot(page, "01_open_server")
 
-    # 如果已经进 server，直接成功
+    # 已登录直接返回
     if "/server/" in page.url:
-        print("✅ 已通过 Cookie 登录", flush=True)
+        print("✅ Cookie 已登录", flush=True)
         return
 
-    # 等账号密码输入框
-    page.wait_for_selector('input', timeout=20000)
-
-    # 严格定位字段（按你截图）
-    user_input = page.locator('input[type="text"], input[type="email"]').first
-    pass_input = page.locator('input[type="password"]').first
-    login_btn = page.locator('button:has-text("Login")')
-
-    if user_input.count() == 0 or pass_input.count() == 0:
-        shot(page, "LOGIN_FORM_NOT_FOUND")
-        raise Exception("未找到账号密码表单")
-
-    user_input.fill(email)
-    pass_input.fill(password)
-
-    shot(page, "02_before_login_submit")
-    login_btn.click(force=True)
-
+    # 等页面稳定
     page.wait_for_timeout(3000)
 
-    # 强制回 server 页面
+    # 找到所有 username / email 输入框
+    user_inputs = page.locator('input[name="username"], input[name="email"]')
+    pass_inputs = page.locator('input[type="password"]')
+
+    visible_user = None
+    visible_pass = None
+
+    for i in range(user_inputs.count()):
+        el = user_inputs.nth(i)
+        if el.is_visible():
+            visible_user = el
+            break
+
+    for i in range(pass_inputs.count()):
+        el = pass_inputs.nth(i)
+        if el.is_visible():
+            visible_pass = el
+            break
+
+    if not visible_user or not visible_pass:
+        shot(page, "LOGIN_FORM_NOT_VISIBLE")
+        raise Exception("账号密码输入框不可见（被遮罩或风控）")
+
+    # 滚动确保可交互
+    visible_user.scroll_into_view_if_needed()
+    visible_pass.scroll_into_view_if_needed()
+
+    visible_user.fill(email)
+    visible_pass.fill(password)
+
+    shot(page, "02_before_login_click")
+
+    # 找可见 Login 按钮
+    login_buttons = page.locator('button:has-text("Login")')
+    clicked = False
+    for i in range(login_buttons.count()):
+        btn = login_buttons.nth(i)
+        if btn.is_visible():
+            btn.click(force=True)
+            clicked = True
+            break
+
+    if not clicked:
+        shot(page, "LOGIN_BUTTON_NOT_VISIBLE")
+        raise Exception("Login 按钮不可见")
+
+    time.sleep(3)
+    shot(page, "03_after_login_submit")
+
+    # 强制跳 server
     page.goto(SERVER_URL, wait_until="networkidle")
     page.wait_for_timeout(2000)
 
     if "/server/" not in page.url:
         shot(page, "LOGIN_FAILED")
-        raise Exception("账号密码登录失败")
+        raise Exception("账号密码登录失败（提交后未进入 server）")
 
-    shot(page, "03_login_success")
+    shot(page, "LOGIN_SUCCESS")
     print("✅ 账号密码登录成功", flush=True)
 
 # ================= 加时逻辑 =================
@@ -128,7 +159,7 @@ def add_time_task(page):
 
 # ================= 主程序 =================
 def main():
-    print("🚀 启动 Godlike 自动加时任务（直登账号密码）", flush=True)
+    print("🚀 启动 Godlike 自动加时任务（极限账号密码尝试）", flush=True)
     ensure_dir(SCREENSHOT_DIR)
 
     with sync_playwright() as p:
