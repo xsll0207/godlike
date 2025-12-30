@@ -1,10 +1,7 @@
 import os
 import time
 import signal
-import json
 import zipfile
-import urllib.request
-import urllib.error
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -48,12 +45,12 @@ def zip_screenshots():
             zf.write(os.path.join(SCREENSHOT_DIR, f), arcname=f)
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= 登录逻辑（最稳） =================
+# ================= 登录逻辑（终态最稳） =================
 def login_with_playwright(page):
     """
-    登录策略：
-    1. 尝试 Cookie + OAuth
-    2. 如果未真正进入 /server/ → 自动走账号密码登录
+    登录顺序：
+    1. Cookie + OAuth
+    2. 如果未真正进入 /server → 账号密码（需点击 Through login/password）
     """
 
     # ---------- Step 1: Cookie + OAuth ----------
@@ -80,18 +77,12 @@ def login_with_playwright(page):
             print("➡️ 点击 Authorization...", flush=True)
             auth_btn.locator("xpath=ancestor::button").click()
 
-            # 等 OAuth 回跳
             for _ in range(18):
                 time.sleep(5)
                 if "/server/" in page.url:
                     take_screenshot(page, "03_after_authorization")
-                    print("✅ OAuth 成功回到服务器页面", flush=True)
+                    print("✅ OAuth 成功", flush=True)
                     return
-        else:
-            # 没出现 Authorization，但可能已登录
-            if "/server/" in page.url:
-                print("✅ Cookie 直接登录成功", flush=True)
-                return
 
         print("⚠️ OAuth 未成功，回退账号密码登录", flush=True)
 
@@ -105,11 +96,23 @@ def login_with_playwright(page):
     page.goto(LOGIN_URL, wait_until="networkidle")
     take_screenshot(page, "LOGIN_PAGE")
 
+    # ⭐ 关键修复点：切换到 login/password
+    login_tab = page.locator('text=Through login/password')
+    if login_tab.count() > 0:
+        print("➡️ 切换到账号密码登录方式", flush=True)
+        login_tab.click()
+        page.wait_for_timeout(500)
+
+    # 等输入框真正可见
+    page.wait_for_selector('input[name="username"]', state="visible", timeout=30000)
+    page.wait_for_selector('input[name="password"]', state="visible", timeout=30000)
+
     page.fill('input[name="username"]', email)
     page.fill('input[name="password"]', password)
+
     page.click('button[type="submit"]')
 
-    # 强制跳转服务器页面
+    # 强制进入服务器页面
     page.goto(SERVER_URL, wait_until="networkidle")
     page.wait_for_timeout(3000)
 
@@ -165,7 +168,7 @@ def main():
                 signal.alarm(TASK_TIMEOUT_SECONDS)
 
             login_with_playwright(page)
-            screenshots = add_time_task(page)
+            add_time_task(page)
 
             if os.name != "nt":
                 signal.alarm(0)
