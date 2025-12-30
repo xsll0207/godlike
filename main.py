@@ -44,18 +44,9 @@ def login_with_playwright(page):
         if "auth/login" in page.url:
             print("Cookie 登录失败或会话已过期，将回退到邮箱密码登录。")
             page.context.clear_cookies()
-else:
-    print("Cookie 登录成功！")
-
-    # ✅ 登录成功后截图
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    page.screenshot(
-        path=f"login_success_{timestamp}.png",
-        full_page=True
-    )
-    print("📸 已保存登录成功截图")
-
-    return True
+        else:
+            print("Cookie 登录成功！")
+            return True
 
     if not (pterodactyl_email and pterodactyl_password):
         print("错误: Cookie 无效或未提供，且未提供 PTERODACTYL_EMAIL 和 PTERODACTYL_PASSWORD。无法登录。", flush=True)
