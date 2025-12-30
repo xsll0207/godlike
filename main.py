@@ -93,11 +93,17 @@ def add_time_task(page):
             print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
             page.goto(SERVER_URL, wait_until="domcontentloaded")
 
-        add_button_selector = 'button:has-text("Add 90 minutes")'
         print("步骤1: 查找并点击 'Add 90 minutes' 按钮...")
-        page.locator(add_button_selector).wait_for(state='visible', timeout=30000)
-        page.locator(add_button_selector).click()
-        print("...已点击 'Add 90 minutes'。")
+
+add_button = page.locator(
+    'span:has-text("Add 90 minutes")'
+).locator('xpath=ancestor::button')
+
+add_button.wait_for(state="visible", timeout=30000)
+add_button.click()
+
+print("...已点击 'Add 90 minutes'")
+
 
         watch_ad_selector = 'button:has-text("Watch advertisment")'
         print("步骤2: 查找并点击 'Watch advertisment' 按钮...")
