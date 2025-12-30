@@ -9,12 +9,14 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
 LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
+
 TASK_TIMEOUT_SECONDS = 300  # 5 分钟
 SCREENSHOT_DIR = "screenshots"
 SCREENSHOT_ZIP = "screenshots.zip"
 
 # ================= 超时控制 =================
 class TaskTimeoutError(Exception):
+    """任务级强制超时异常"""
     pass
 
 def timeout_handler(signum, frame):
@@ -37,6 +39,7 @@ def take_screenshot(page, stage):
 def zip_screenshots():
     if not os.path.isdir(SCREENSHOT_DIR):
         return
+
     files = os.listdir(SCREENSHOT_DIR)
     if not files:
         return
@@ -47,7 +50,7 @@ def zip_screenshots():
 
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= 登录逻辑 =================
+# ================= 登录逻辑（Cookie + OAuth） =================
 def login_with_playwright(page):
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     if not cookie:
@@ -75,7 +78,7 @@ def login_with_playwright(page):
         auth_span.locator("xpath=ancestor::button").click()
 
         print("等待 OAuth 授权完成...", flush=True)
-        for _ in range(18):
+        for _ in range(18):  # 最多 90 秒
             time.sleep(5)
             if page.locator('span:has-text("Authorization")').count() == 0:
                 take_screenshot(page, "03_after_authorization")
@@ -106,11 +109,13 @@ def add_time_task(page):
     else:
         raise PlaywrightTimeoutError("Add 90 minutes 未出现")
 
+    print("查找 Watch advertisment...", flush=True)
     page.locator('button:has-text("Watch advertisment")') \
         .wait_for(state="visible", timeout=30000)
     page.locator('button:has-text("Watch advertisment")').click()
     take_screenshot(page, "06_after_click_watch_ad")
 
+    print("等待 2 分钟...", flush=True)
     time.sleep(120)
 
 # ================= 主程序 =================
@@ -155,5 +160,6 @@ def main():
             browser.close()
             print("浏览器已关闭，程序结束", flush=True)
 
+# ================= 入口 =================
 if __name__ == "__main__":
     main()
