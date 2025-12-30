@@ -44,11 +44,20 @@ def login_with_playwright(page):
 
         # 🔑 关键：Authorization 页面
         auth_span = page.locator('span:has-text("Authorization")')
-        if auth_span.count() > 0:
-            print("检测到 Authorization，正在点击...")
-            auth_span.locator("xpath=ancestor::button").click()
+if auth_span.count() > 0:
+    print("检测到 Authorization，正在点击...")
+    auth_span.locator("xpath=ancestor::button").click()
 
-print("等待 OAuth 授权完成并返回 server 页面...")
+    print("等待 OAuth 授权完成并返回服务器页面...")
+    for _ in range(18):  # 最多 90 秒
+        time.sleep(5)
+        if "/server/" in page.url:
+            page.wait_for_timeout(3000)
+            print("✅ OAuth 授权完成")
+            break
+    else:
+        raise PlaywrightTimeoutError("OAuth 授权超时，未返回服务器页面")
+
 
 # 最多等待 90 秒，轮询 URL
 success = False
