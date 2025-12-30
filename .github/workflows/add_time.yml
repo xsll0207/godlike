@@ -31,11 +31,12 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Run Time Adder Script
-        env:
-          PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
-          PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
-          PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
-        run: python -u main.py
+  env:
+    PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
+    PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
+    PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  run: python -u main.py
 
       # ✅【关键修改】始终上传 screenshots.zip
       - name: Upload screenshots artifact
