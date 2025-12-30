@@ -20,13 +20,19 @@ def timeout_handler(signum, frame):
 if os.name != "nt":
     signal.signal(signal.SIGALRM, timeout_handler)
 
-# ================= 登录逻辑（最终稳定版） =================
+# ================= 工具：截图 =================
+def take_screenshot(page, stage):
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{stage}_{ts}.png"
+    page.screenshot(path=filename)
+    print(f"📸 已保存截图: {filename}")
+
+# ================= 登录逻辑 =================
 def login_with_playwright(page):
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     email = os.environ.get("PTERODACTYL_EMAIL")
     password = os.environ.get("PTERODACTYL_PASSWORD")
 
-    # ---------- Cookie + OAuth 登录 ----------
     if cookie:
         print("检测到 PTERODACTYL_COOKIE，尝试使用 Cookie 登录...")
         page.context.add_cookies([{
@@ -41,27 +47,28 @@ def login_with_playwright(page):
 
         page.goto(SERVER_URL, wait_until="networkidle")
         page.wait_for_timeout(3000)
+        take_screenshot(page, "01_after_open_server")
 
-        # Authorization（如果存在）
         auth_span = page.locator('span:has-text("Authorization")')
         if auth_span.count() > 0:
+            take_screenshot(page, "02_before_authorization")
             print("检测到 Authorization，正在点击...")
             auth_span.locator("xpath=ancestor::button").click()
 
             print("等待 OAuth 授权完成...")
-            for _ in range(18):  # 最多 90 秒
+            for _ in range(18):
                 time.sleep(5)
                 if page.locator('span:has-text("Authorization")').count() == 0:
+                    take_screenshot(page, "03_after_authorization")
                     print("✅ OAuth 授权完成")
                     break
             else:
                 raise PlaywrightTimeoutError("OAuth 授权超时")
 
-        # ⭐ 关键：OAuth 完成后直接认为登录成功
         print("✅ 已通过 Cookie + OAuth 登录")
         return True
 
-    # ---------- 账号密码登录（仅在没有 Cookie 时） ----------
+    # -------- 账号密码登录（兜底） --------
     if not email or not password:
         print("❌ 无法登录：未提供邮箱或密码")
         return False
@@ -79,7 +86,6 @@ def login_with_playwright(page):
     with page.expect_navigation(wait_until="networkidle"):
         page.click('button[type="submit"]')
 
-    print("✅ 邮箱密码登录完成")
     return True
 
 # ================= 增加时长任务 =================
@@ -88,31 +94,30 @@ def add_time_task(page):
         print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始执行增加时长任务")
 
         page.goto(SERVER_URL, wait_until="networkidle")
-page.wait_for_timeout(5000)
+        page.wait_for_timeout(5000)
 
-# 📸 在查找 Add 90 minutes 之前截图
-page.screenshot(path="before_add_90_minutes.png")
+        # 📸 查找 Add 90 minutes 之前
+        take_screenshot(page, "04_before_add_90_minutes")
 
-print("查找 Add 90 minutes...")
-
-        for _ in range(18):  # 最多 90 秒
+        print("查找 Add 90 minutes...")
+        for _ in range(18):
             span = page.locator('span:has-text("Add 90 minutes")')
             if span.count() > 0:
                 span.locator("xpath=ancestor::button").click()
+                take_screenshot(page, "05_after_click_add_90_minutes")
                 print("✅ 已点击 Add 90 minutes")
                 break
             time.sleep(5)
         else:
             raise PlaywrightTimeoutError("Add 90 minutes 未出现")
 
-        # ---------- Watch advertisment ----------
         print("查找 Watch advertisment...")
         page.locator('button:has-text("Watch advertisment")') \
             .wait_for(state="visible", timeout=30000)
         page.locator('button:has-text("Watch advertisment")').click()
+        take_screenshot(page, "06_after_click_watch_ad")
         print("✅ 已点击 Watch advertisment")
 
-        # ---------- 固定等待 ----------
         print("等待 2 分钟...")
         time.sleep(120)
 
@@ -120,7 +125,7 @@ print("查找 Add 90 minutes...")
 
     except Exception as e:
         print(f"❌ 增加时长失败: {e}")
-        page.screenshot(path="task_error.png")
+        take_screenshot(page, "99_error")
         return False
 
 # ================= 主程序 =================
