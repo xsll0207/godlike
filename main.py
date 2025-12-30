@@ -45,13 +45,14 @@ def zip_screenshots():
             zf.write(os.path.join(SCREENSHOT_DIR, f), arcname=f)
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= 登录逻辑（可见性修正版） =================
+# ================= 登录逻辑（强制 Through login/password） =================
 def login_with_password(page):
     email = os.environ.get("PTERODACTYL_EMAIL")
     password = os.environ.get("PTERODACTYL_PASSWORD")
     if not email or not password:
         raise Exception("未提供账号密码")
 
+    # 如果有 cookie，先注入（能省一次登录）
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     if cookie:
         page.context.add_cookies([{
@@ -64,51 +65,65 @@ def login_with_password(page):
             "sameSite": "Lax",
         }])
 
+    # 访问服务器页面
     page.goto(SERVER_URL, wait_until="networkidle")
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(2000)
     shot(page, "01_open_server")
 
-    # 已登录直接返回
+    # 如果已经进 server，直接成功
     if "/server/" in page.url:
         print("✅ Cookie 已登录", flush=True)
         return
 
-    # 等页面稳定
-    page.wait_for_timeout(3000)
+    # 确认在 Login to continue 页面
+    page.wait_for_timeout(2000)
 
-    # 找到所有 username / email 输入框
+    # ⭐ 核心：点击 Through login/password
+    switch = page.locator('text=Through login/password')
+    if switch.count() == 0 or not switch.first.is_visible():
+        shot(page, "NO_THROUGH_LOGIN_PASSWORD")
+        raise Exception("未找到 Through login/password 按钮")
+
+    print("➡️ 点击 Through login/password", flush=True)
+    switch.first.click(force=True)
+    time.sleep(500)
+
+    shot(page, "02_after_click_through_login")
+
+    # 等账号密码表单真正可见
+    page.wait_for_selector('input[name="username"], input[name="email"]', state="visible", timeout=30000)
+    page.wait_for_selector('input[type="password"]', state="visible", timeout=30000)
+
+    # 取可见的输入框
     user_inputs = page.locator('input[name="username"], input[name="email"]')
     pass_inputs = page.locator('input[type="password"]')
 
-    visible_user = None
-    visible_pass = None
+    user_box = None
+    pass_box = None
 
     for i in range(user_inputs.count()):
-        el = user_inputs.nth(i)
-        if el.is_visible():
-            visible_user = el
+        if user_inputs.nth(i).is_visible():
+            user_box = user_inputs.nth(i)
             break
 
     for i in range(pass_inputs.count()):
-        el = pass_inputs.nth(i)
-        if el.is_visible():
-            visible_pass = el
+        if pass_inputs.nth(i).is_visible():
+            pass_box = pass_inputs.nth(i)
             break
 
-    if not visible_user or not visible_pass:
+    if not user_box or not pass_box:
         shot(page, "LOGIN_FORM_NOT_VISIBLE")
-        raise Exception("账号密码输入框不可见（被遮罩或风控）")
+        raise Exception("账号密码输入框不可见")
 
-    # 滚动确保可交互
-    visible_user.scroll_into_view_if_needed()
-    visible_pass.scroll_into_view_if_needed()
+    user_box.scroll_into_view_if_needed()
+    pass_box.scroll_into_view_if_needed()
 
-    visible_user.fill(email)
-    visible_pass.fill(password)
+    user_box.fill(email)
+    pass_box.fill(password)
 
-    shot(page, "02_before_login_click")
+    shot(page, "03_before_login_submit")
 
-    # 找可见 Login 按钮
+    # 点击 Login
     login_buttons = page.locator('button:has-text("Login")')
     clicked = False
     for i in range(login_buttons.count()):
@@ -123,43 +138,43 @@ def login_with_password(page):
         raise Exception("Login 按钮不可见")
 
     time.sleep(3)
-    shot(page, "03_after_login_submit")
+    shot(page, "04_after_login_submit")
 
-    # 强制跳 server
+    # 强制进入 server 页面
     page.goto(SERVER_URL, wait_until="networkidle")
     page.wait_for_timeout(2000)
 
     if "/server/" not in page.url:
         shot(page, "LOGIN_FAILED")
-        raise Exception("账号密码登录失败（提交后未进入 server）")
+        raise Exception("账号密码登录失败")
 
-    shot(page, "LOGIN_SUCCESS")
+    shot(page, "05_login_success")
     print("✅ 账号密码登录成功", flush=True)
 
 # ================= 加时逻辑 =================
 def add_time_task(page):
     page.goto(SERVER_URL, wait_until="networkidle")
     page.wait_for_timeout(5000)
-    shot(page, "04_before_add_90_minutes")
+    shot(page, "06_before_add_90_minutes")
 
     btn = page.locator('span:has-text("Add 90 minutes")')
     if btn.count() == 0:
         print("ℹ️ 当前不可加时", flush=True)
-        shot(page, "05_add_not_available")
+        shot(page, "07_add_not_available")
         return
 
     btn.locator("xpath=ancestor::button").click()
-    shot(page, "06_after_click_add")
+    shot(page, "08_after_click_add")
 
     page.locator('button:has-text("Watch advertisment")').click()
-    shot(page, "07_after_watch_ad")
+    shot(page, "09_after_watch_ad")
 
     print("⏳ 等待 2 分钟", flush=True)
     time.sleep(120)
 
 # ================= 主程序 =================
 def main():
-    print("🚀 启动 Godlike 自动加时任务（极限账号密码尝试）", flush=True)
+    print("🚀 启动 Godlike 自动加时任务（Through login/password）", flush=True)
     ensure_dir(SCREENSHOT_DIR)
 
     with sync_playwright() as p:
