@@ -37,12 +37,13 @@ jobs:
           PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
           PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
           PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # ✅ 关键：给 main.py 用
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python -u main.py
 
       # ================= 上传截图产物 =================
-      # 始终上传 screenshots.zip（不管成功还是失败）
+      # 无论成功还是失败，都执行
       - name: Upload screenshots artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
