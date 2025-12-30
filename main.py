@@ -15,7 +15,6 @@ SCREENSHOT_ZIP = "screenshots.zip"
 
 # ================= 超时控制 =================
 class TaskTimeoutError(Exception):
-    """任务级强制超时异常"""
     pass
 
 def timeout_handler(signum, frame):
@@ -51,7 +50,6 @@ def zip_screenshots():
 # ================= 登录逻辑 =================
 def login_with_playwright(page):
     cookie = os.environ.get("PTERODACTYL_COOKIE")
-
     if not cookie:
         raise Exception("未提供 PTERODACTYL_COOKIE")
 
@@ -108,13 +106,11 @@ def add_time_task(page):
     else:
         raise PlaywrightTimeoutError("Add 90 minutes 未出现")
 
-    print("查找 Watch advertisment...", flush=True)
     page.locator('button:has-text("Watch advertisment")') \
         .wait_for(state="visible", timeout=30000)
     page.locator('button:has-text("Watch advertisment")').click()
     take_screenshot(page, "06_after_click_watch_ad")
 
-    print("等待 2 分钟...", flush=True)
     time.sleep(120)
 
 # ================= 主程序 =================
@@ -159,6 +155,5 @@ def main():
             browser.close()
             print("浏览器已关闭，程序结束", flush=True)
 
-# ================= 入口 =================
 if __name__ == "__main__":
     main()
