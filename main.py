@@ -25,21 +25,13 @@ def timeout_handler(signum, frame):
 if os.name != "nt":
     signal.signal(signal.SIGALRM, timeout_handler)
 
-# ================= 截图工具 =================
+# ================= 基础工具 =================
 def ensure_screenshot_dir():
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-
-def take_screenshot(page, stage):
-    ensure_screenshot_dir()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(SCREENSHOT_DIR, f"{stage}_{ts}.png")
-    page.screenshot(path=path)
-    print(f"📸 已保存截图: {path}", flush=True)
 
 def zip_screenshots():
     if not os.path.isdir(SCREENSHOT_DIR):
         return
-
     files = os.listdir(SCREENSHOT_DIR)
     if not files:
         return
@@ -50,13 +42,14 @@ def zip_screenshots():
 
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= 登录逻辑（Cookie + OAuth） =================
+# ================= 登录逻辑 =================
 def login_with_playwright(page):
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     if not cookie:
         raise Exception("未提供 PTERODACTYL_COOKIE")
 
     print("检测到 PTERODACTYL_COOKIE，尝试使用 Cookie 登录...", flush=True)
+
     page.context.add_cookies([{
         "name": COOKIE_NAME,
         "value": cookie,
@@ -69,19 +62,20 @@ def login_with_playwright(page):
 
     page.goto(SERVER_URL, wait_until="networkidle")
     page.wait_for_timeout(3000)
-    take_screenshot(page, "01_after_open_server")
+    page.screenshot(path=f"{SCREENSHOT_DIR}/01_after_open_server.png")
 
     auth_span = page.locator('span:has-text("Authorization")')
     if auth_span.count() > 0:
-        take_screenshot(page, "02_before_authorization")
+        page.screenshot(path=f"{SCREENSHOT_DIR}/02_before_authorization.png")
         print("检测到 Authorization，正在点击...", flush=True)
+
         auth_span.locator("xpath=ancestor::button").click()
 
         print("等待 OAuth 授权完成...", flush=True)
-        for _ in range(18):  # 最多 90 秒
+        for _ in range(18):
             time.sleep(5)
             if page.locator('span:has-text("Authorization")').count() == 0:
-                take_screenshot(page, "03_after_authorization")
+                page.screenshot(path=f"{SCREENSHOT_DIR}/03_after_authorization.png")
                 print("✅ OAuth 授权完成", flush=True)
                 break
         else:
@@ -95,25 +89,24 @@ def add_time_task(page):
 
     page.goto(SERVER_URL, wait_until="networkidle")
     page.wait_for_timeout(5000)
-    take_screenshot(page, "04_before_add_90_minutes")
+    page.screenshot(path=f"{SCREENSHOT_DIR}/04_before_add_90_minutes.png")
 
     print("查找 Add 90 minutes...", flush=True)
     for _ in range(18):
         span = page.locator('span:has-text("Add 90 minutes")')
         if span.count() > 0:
             span.locator("xpath=ancestor::button").click()
-            take_screenshot(page, "05_after_click_add_90_minutes")
+            page.screenshot(path=f"{SCREENSHOT_DIR}/05_after_click_add_90_minutes.png")
             print("✅ 已点击 Add 90 minutes", flush=True)
             break
         time.sleep(5)
     else:
         raise PlaywrightTimeoutError("Add 90 minutes 未出现")
 
-    print("查找 Watch advertisment...", flush=True)
     page.locator('button:has-text("Watch advertisment")') \
         .wait_for(state="visible", timeout=30000)
     page.locator('button:has-text("Watch advertisment")').click()
-    take_screenshot(page, "06_after_click_watch_ad")
+    page.screenshot(path=f"{SCREENSHOT_DIR}/06_after_click_watch_ad.png")
 
     print("等待 2 分钟...", flush=True)
     time.sleep(120)
@@ -143,14 +136,14 @@ def main():
         except TaskTimeoutError as e:
             print(f"🔥🔥🔥 任务强制超时（{TASK_TIMEOUT_SECONDS}秒）！🔥🔥🔥", flush=True)
             print(f"错误信息: {e}", flush=True)
-            take_screenshot(page, "98_task_force_timeout")
+            page.screenshot(path="task_force_timeout_error.png")
             zip_screenshots()
             browser.close()
             exit(1)
 
         except Exception as e:
             print(f"主程序发生严重错误: {e}", flush=True)
-            take_screenshot(page, "99_main_critical_error")
+            page.screenshot(path="main_critical_error.png")
             zip_screenshots()
             browser.close()
             exit(1)
