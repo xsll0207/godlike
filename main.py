@@ -47,8 +47,23 @@ def login_with_playwright(page):
         if auth_span.count() > 0:
             print("检测到 Authorization，正在点击...")
             auth_span.locator("xpath=ancestor::button").click()
-            page.wait_for_url("**/server/**", timeout=60000)
-            page.wait_for_timeout(3000)
+
+print("等待 OAuth 授权完成并返回 server 页面...")
+
+# 最多等待 90 秒，轮询 URL
+success = False
+for _ in range(18):  # 18 × 5s = 90s
+    time.sleep(5)
+    print("当前 URL:", page.url)
+    if "/server/" in page.url:
+        success = True
+        break
+
+if not success:
+    raise PlaywrightTimeoutError("OAuth 授权后未返回 server 页面")
+
+page.wait_for_timeout(3000)
+
 
         if "/server/" in page.url:
             print("✅ Cookie + Authorization 登录成功")
