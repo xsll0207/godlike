@@ -13,12 +13,11 @@ SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
 SCREENSHOT_DIR = "screenshots"
-DOWNLOAD_DIR = "downloaded"
 SCREENSHOT_ZIP = "screenshots.zip"
 TASK_TIMEOUT_SECONDS = 300
 
 # ================= GitHub 配置 =================
-REPO = os.environ.get("GITHUB_REPOSITORY")  # owner/repo
+REPO = os.environ.get("GITHUB_REPOSITORY")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_API = "https://api.github.com"
 TAG = f"screenshots-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -57,76 +56,7 @@ def zip_screenshots():
             zf.write(os.path.join(SCREENSHOT_DIR, f), arcname=f)
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= GitHub Release =================
-def github_post(url, payload):
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-        },
-    )
-    return urllib.request.urlopen(req)
-
-def create_release():
-    with github_post(
-        f"{GITHUB_API}/repos/{REPO}/releases",
-        {
-            "tag_name": TAG,
-            "name": TAG,
-            "draft": False,
-            "prerelease": False,
-        },
-    ) as resp:
-        data = json.loads(resp.read().decode())
-        return data["upload_url"].split("{")[0]
-
-def upload_asset(upload_url, filepath):
-    name = os.path.basename(filepath)
-    with open(filepath, "rb") as f:
-        data = f.read()
-    req = urllib.request.Request(
-        f"{upload_url}?name={name}",
-        data=data,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Content-Type": "application/octet-stream",
-        },
-    )
-    urllib.request.urlopen(req)
-    return f"https://github.com/{REPO}/releases/download/{TAG}/{name}"
-
-# ================= 禁止重定向 =================
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-def download_via_github_signed(stable_url, out_path):
-    opener = urllib.request.build_opener(NoRedirect)
-    req = urllib.request.Request(
-        stable_url,
-        headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Accept": "application/octet-stream",
-        },
-    )
-    try:
-        opener.open(req)
-        raise RuntimeError("未捕获到 GitHub 重定向")
-    except urllib.error.HTTPError as e:
-        if e.code not in (301, 302):
-            raise
-        signed_url = e.headers.get("Location")
-        print("🔐 GitHub 内部临时 URL：", flush=True)
-        print(signed_url, flush=True)
-        urllib.request.urlretrieve(signed_url, out_path)
-        print(f"⬇️ 已通过临时凭证下载: {out_path}", flush=True)
-
-# ================= Godlike 登录 =================
+# ================= Godlike 登录（非 headless） =================
 def login_with_playwright(page):
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     if not cookie:
@@ -146,18 +76,30 @@ def login_with_playwright(page):
     page.wait_for_timeout(3000)
     take_screenshot(page, "01_after_open_server")
 
+    # 处理 Authorization
     auth_span = page.locator('span:has-text("Authorization")')
     if auth_span.count() > 0:
         take_screenshot(page, "02_before_authorization")
         auth_span.locator("xpath=ancestor::button").click()
 
-        for _ in range(18):
+        print("🔑 已点击 Authorization，等待 OAuth 回跳...", flush=True)
+
+        # 给 OAuth 足够时间（非常重要）
+        for _ in range(30):  # 最多 150 秒
             time.sleep(5)
-            if page.locator('span:has-text("Authorization")').count() == 0:
-                take_screenshot(page, "03_after_authorization")
+            if "/server/" in page.url:
                 break
         else:
-            raise PlaywrightTimeoutError("OAuth 授权超时")
+            take_screenshot(page, "AUTH_NOT_RETURNED_TO_SERVER")
+            raise Exception("OAuth 未成功回到服务器页面")
+
+        page.wait_for_timeout(3000)
+        take_screenshot(page, "03_after_authorization")
+
+    # 最终校验（硬性）
+    if "/server/" not in page.url:
+        take_screenshot(page, "LOGIN_FAILED_FINAL_CHECK")
+        raise Exception("最终校验失败：仍未进入服务器面板")
 
 # ================= 增加时长任务 =================
 def add_time_task(page):
@@ -174,26 +116,43 @@ def add_time_task(page):
             page.locator('button:has-text("Watch advertisment")').click()
             final_img = take_screenshot(page, "06_after_click_watch_ad")
 
-            print("等待 2 分钟...", flush=True)
+            print("⏳ 等待 2 分钟...", flush=True)
             time.sleep(120)
 
             return [before_img, after_img, final_img]
 
         time.sleep(5)
 
-    # ⭐ 业务不可用分支（不是异常）
-    print("ℹ️ 当前不可加时（未出现 Add 90 minutes），跳过本轮", flush=True)
+    print("ℹ️ 当前不可加时（未出现 Add 90 minutes）", flush=True)
     skip_img = take_screenshot(page, "07_add_90_not_available")
     return [before_img, skip_img]
 
 # ================= 主程序 =================
 def main():
     ensure_dir(SCREENSHOT_DIR)
-    ensure_dir(DOWNLOAD_DIR)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        # 🔥 关键：非 headless + 反自动化参数
+        browser = p.chromium.launch(
+            headless=False,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"
+            ]
+        )
+
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            locale="en-US"
+        )
+
+        page = context.new_page()
         page.set_default_timeout(60000)
 
         try:
@@ -214,16 +173,6 @@ def main():
 
         finally:
             browser.close()
-
-    print("🚀 创建 GitHub Release...", flush=True)
-    upload_url = create_release()
-
-    for img in screenshots:
-        stable = upload_asset(upload_url, img)
-        download_via_github_signed(
-            stable,
-            f"{DOWNLOAD_DIR}/{os.path.basename(img)}"
-        )
 
     zip_screenshots()
 
