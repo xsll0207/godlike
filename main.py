@@ -2,21 +2,25 @@ import os
 import time
 import signal
 import zipfile
+import requests
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-# ================= 配置 =================
+# ================= GitHub 配置 =================
+REPO = os.environ.get("GITHUB_REPOSITORY")  # owner/repo
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_API = "https://api.github.com"
+
+# ================= 业务配置 =================
 SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
-LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
-TASK_TIMEOUT_SECONDS = 300  # 5 分钟
 SCREENSHOT_DIR = "screenshots"
-SCREENSHOT_ZIP = "screenshots.zip"
+DOWNLOAD_DIR = "downloaded"
+TAG = f"screenshots-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
 # ================= 超时控制 =================
 class TaskTimeoutError(Exception):
-    """任务级强制超时异常"""
     pass
 
 def timeout_handler(signum, frame):
@@ -25,134 +29,109 @@ def timeout_handler(signum, frame):
 if os.name != "nt":
     signal.signal(signal.SIGALRM, timeout_handler)
 
-# ================= 基础工具 =================
-def ensure_screenshot_dir():
-    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+# ================= 工具 =================
+def ensure_dir(path):
+    os.makedirs(path, exist_ok=True)
 
-def zip_screenshots():
-    if not os.path.isdir(SCREENSHOT_DIR):
-        return
-    files = os.listdir(SCREENSHOT_DIR)
-    if not files:
-        return
+def screenshot(page, name):
+    path = f"{SCREENSHOT_DIR}/{name}.png"
+    page.screenshot(path=path)
+    print(f"📸 截图完成: {path}", flush=True)
+    return path
 
-    with zipfile.ZipFile(SCREENSHOT_ZIP, "w", zipfile.ZIP_DEFLATED) as zf:
-        for f in files:
-            zf.write(os.path.join(SCREENSHOT_DIR, f), arcname=f)
+# ================= GitHub Release =================
+def create_release():
+    url = f"{GITHUB_API}/repos/{REPO}/releases"
+    r = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        },
+        json={
+            "tag_name": TAG,
+            "name": TAG,
+            "draft": False,
+            "prerelease": False,
+        },
+    )
+    r.raise_for_status()
+    return r.json()["upload_url"].split("{")[0]
 
-    print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
+def upload_asset(upload_url, filepath):
+    name = os.path.basename(filepath)
+    with open(filepath, "rb") as f:
+        r = requests.post(
+            f"{upload_url}?name={name}",
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Content-Type": "application/octet-stream",
+            },
+            data=f,
+        )
+    r.raise_for_status()
+    return f"https://github.com/{REPO}/releases/download/{TAG}/{name}"
 
-# ================= 登录逻辑 =================
-def login_with_playwright(page):
-    cookie = os.environ.get("PTERODACTYL_COOKIE")
-    if not cookie:
-        raise Exception("未提供 PTERODACTYL_COOKIE")
+# ================= 临时凭证下载 =================
+def download_via_github_signed(url, out_path):
+    r = requests.get(
+        url,
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/octet-stream",
+        },
+        allow_redirects=False,
+    )
 
-    print("检测到 PTERODACTYL_COOKIE，尝试使用 Cookie 登录...", flush=True)
+    if r.status_code not in (301, 302):
+        raise Exception("未获得 GitHub 重定向")
 
-    page.context.add_cookies([{
-        "name": COOKIE_NAME,
-        "value": cookie,
-        "domain": ".panel.godlike.host",
-        "path": "/",
-        "httpOnly": True,
-        "secure": True,
-        "sameSite": "Lax",
-    }])
+    signed_url = r.headers["Location"]
+    print("🔐 GitHub 内部临时下载 URL：")
+    print(signed_url)
 
-    page.goto(SERVER_URL, wait_until="networkidle")
-    page.wait_for_timeout(3000)
-    page.screenshot(path=f"{SCREENSHOT_DIR}/01_after_open_server.png")
+    with requests.get(signed_url, stream=True) as resp:
+        resp.raise_for_status()
+        with open(out_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
 
-    auth_span = page.locator('span:has-text("Authorization")')
-    if auth_span.count() > 0:
-        page.screenshot(path=f"{SCREENSHOT_DIR}/02_before_authorization.png")
-        print("检测到 Authorization，正在点击...", flush=True)
-
-        auth_span.locator("xpath=ancestor::button").click()
-
-        print("等待 OAuth 授权完成...", flush=True)
-        for _ in range(18):
-            time.sleep(5)
-            if page.locator('span:has-text("Authorization")').count() == 0:
-                page.screenshot(path=f"{SCREENSHOT_DIR}/03_after_authorization.png")
-                print("✅ OAuth 授权完成", flush=True)
-                break
-        else:
-            raise PlaywrightTimeoutError("OAuth 授权超时")
-
-    print("✅ Cookie + OAuth 登录完成", flush=True)
-
-# ================= 增加时长任务 =================
-def add_time_task(page):
-    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始执行增加时长任务", flush=True)
-
-    page.goto(SERVER_URL, wait_until="networkidle")
-    page.wait_for_timeout(5000)
-    page.screenshot(path=f"{SCREENSHOT_DIR}/04_before_add_90_minutes.png")
-
-    print("查找 Add 90 minutes...", flush=True)
-    for _ in range(18):
-        span = page.locator('span:has-text("Add 90 minutes")')
-        if span.count() > 0:
-            span.locator("xpath=ancestor::button").click()
-            page.screenshot(path=f"{SCREENSHOT_DIR}/05_after_click_add_90_minutes.png")
-            print("✅ 已点击 Add 90 minutes", flush=True)
-            break
-        time.sleep(5)
-    else:
-        raise PlaywrightTimeoutError("Add 90 minutes 未出现")
-
-    page.locator('button:has-text("Watch advertisment")') \
-        .wait_for(state="visible", timeout=30000)
-    page.locator('button:has-text("Watch advertisment")').click()
-    page.screenshot(path=f"{SCREENSHOT_DIR}/06_after_click_watch_ad.png")
-
-    print("等待 2 分钟...", flush=True)
-    time.sleep(120)
+    print(f"⬇️ 文件已通过临时凭证下载: {out_path}", flush=True)
 
 # ================= 主程序 =================
 def main():
-    print("启动自动化任务...", flush=True)
-    ensure_screenshot_dir()
+    ensure_dir(SCREENSHOT_DIR)
+    ensure_dir(DOWNLOAD_DIR)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.set_default_timeout(60000)
 
-        try:
-            if os.name != "nt":
-                signal.alarm(TASK_TIMEOUT_SECONDS)
+        page.context.add_cookies([{
+            "name": COOKIE_NAME,
+            "value": os.environ["PTERODACTYL_COOKIE"],
+            "domain": ".panel.godlike.host",
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+        }])
 
-            login_with_playwright(page)
-            add_time_task(page)
+        page.goto(SERVER_URL)
+        img = screenshot(page, "01_open_server")
+        browser.close()
 
-            if os.name != "nt":
-                signal.alarm(0)
+    print("🚀 创建 GitHub Release...")
+    upload_url = create_release()
 
-            print("🎉 本轮任务成功完成", flush=True)
+    print("📤 上传截图...")
+    stable_url = upload_asset(upload_url, img)
 
-        except TaskTimeoutError as e:
-            print(f"🔥🔥🔥 任务强制超时（{TASK_TIMEOUT_SECONDS}秒）！🔥🔥🔥", flush=True)
-            print(f"错误信息: {e}", flush=True)
-            page.screenshot(path="task_force_timeout_error.png")
-            zip_screenshots()
-            browser.close()
-            exit(1)
+    print("⬇️ 使用 GitHub 内部临时凭证下载...")
+    download_via_github_signed(
+        stable_url,
+        f"{DOWNLOAD_DIR}/01_open_server.png"
+    )
 
-        except Exception as e:
-            print(f"主程序发生严重错误: {e}", flush=True)
-            page.screenshot(path="main_critical_error.png")
-            zip_screenshots()
-            browser.close()
-            exit(1)
-
-        finally:
-            zip_screenshots()
-            browser.close()
-            print("浏览器已关闭，程序结束", flush=True)
-
-# ================= 入口 =================
 if __name__ == "__main__":
     main()
