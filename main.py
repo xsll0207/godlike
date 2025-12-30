@@ -1,10 +1,12 @@
 import os
 import time
 import signal
+import json
 import zipfile
-import requests
+import urllib.request
+import urllib.error
 from datetime import datetime
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 # ================= GitHub 配置 =================
 REPO = os.environ.get("GITHUB_REPOSITORY")  # owner/repo
@@ -39,64 +41,85 @@ def screenshot(page, name):
     print(f"📸 截图完成: {path}", flush=True)
     return path
 
-# ================= GitHub Release =================
+# ================= GitHub API（urllib 实现） =================
+def github_request(url, method="GET", data=None, headers=None):
+    req = urllib.request.Request(url, method=method)
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
+    if data:
+        data = data.encode("utf-8")
+    return urllib.request.urlopen(req, data=data)
+
 def create_release():
     url = f"{GITHUB_API}/repos/{REPO}/releases"
-    r = requests.post(
+    payload = json.dumps({
+        "tag_name": TAG,
+        "name": TAG,
+        "draft": False,
+        "prerelease": False,
+    })
+
+    with github_request(
         url,
+        method="POST",
+        data=payload,
         headers={
             "Authorization": f"Bearer {GITHUB_TOKEN}",
             "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
         },
-        json={
-            "tag_name": TAG,
-            "name": TAG,
-            "draft": False,
-            "prerelease": False,
-        },
-    )
-    r.raise_for_status()
-    return r.json()["upload_url"].split("{")[0]
+    ) as resp:
+        result = json.loads(resp.read().decode())
+        return result["upload_url"].split("{")[0]
 
 def upload_asset(upload_url, filepath):
     name = os.path.basename(filepath)
     with open(filepath, "rb") as f:
-        r = requests.post(
-            f"{upload_url}?name={name}",
-            headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
-                "Content-Type": "application/octet-stream",
-            },
-            data=f,
-        )
-    r.raise_for_status()
+        data = f.read()
+
+    req = urllib.request.Request(
+        f"{upload_url}?name={name}",
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Content-Type": "application/octet-stream",
+        },
+    )
+
+    with urllib.request.urlopen(req):
+        pass
+
     return f"https://github.com/{REPO}/releases/download/{TAG}/{name}"
 
 # ================= 临时凭证下载 =================
-def download_via_github_signed(url, out_path):
-    r = requests.get(
-        url,
+def download_via_github_signed(stable_url, out_path):
+    req = urllib.request.Request(
+        stable_url,
         headers={
             "Authorization": f"Bearer {GITHUB_TOKEN}",
             "Accept": "application/octet-stream",
         },
-        allow_redirects=False,
     )
 
-    if r.status_code not in (301, 302):
-        raise Exception("未获得 GitHub 重定向")
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPRedirectHandler()
+    )
 
-    signed_url = r.headers["Location"]
-    print("🔐 GitHub 内部临时下载 URL：")
-    print(signed_url)
+    try:
+        opener.open(req)
+        raise Exception("未捕获到 GitHub 重定向")
+    except urllib.error.HTTPError as e:
+        if e.code not in (301, 302):
+            raise
 
-    with requests.get(signed_url, stream=True) as resp:
-        resp.raise_for_status()
-        with open(out_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+        signed_url = e.headers.get("Location")
+        print("🔐 GitHub 内部临时下载 URL：", flush=True)
+        print(signed_url, flush=True)
 
-    print(f"⬇️ 文件已通过临时凭证下载: {out_path}", flush=True)
+        urllib.request.urlretrieve(signed_url, out_path)
+        print(f"⬇️ 已通过临时凭证下载: {out_path}", flush=True)
 
 # ================= 主程序 =================
 def main():
@@ -121,13 +144,13 @@ def main():
         img = screenshot(page, "01_open_server")
         browser.close()
 
-    print("🚀 创建 GitHub Release...")
+    print("🚀 创建 GitHub Release...", flush=True)
     upload_url = create_release()
 
-    print("📤 上传截图...")
+    print("📤 上传截图...", flush=True)
     stable_url = upload_asset(upload_url, img)
 
-    print("⬇️ 使用 GitHub 内部临时凭证下载...")
+    print("⬇️ 使用 GitHub 内部临时凭证下载...", flush=True)
     download_via_github_signed(
         stable_url,
         f"{DOWNLOAD_DIR}/01_open_server.png"
