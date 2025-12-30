@@ -5,200 +5,140 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from datetime import datetime
 
 # --- 配置项 ---
-SERVER_URL = "https://panel.godlike.host/server/d8419316"
+SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
 LOGIN_URL = "https://panel.godlike.host/auth/login"
-COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7989d"
-# 单次任务执行的超时时间（秒），依然保留以防单次运行卡死
+COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 TASK_TIMEOUT_SECONDS = 300  # 5分钟
 
 # --- 超时处理机制 ---
 class TaskTimeoutError(Exception):
-    """自定义任务超时异常"""
     pass
 
 def timeout_handler(signum, frame):
-    """超时信号处理函数"""
     raise TaskTimeoutError("任务执行时间超过设定的阈值")
 
 if os.name != 'nt':
     signal.signal(signal.SIGALRM, timeout_handler)
 
-# login_with_playwright 函数保持不变，此处为完整代码
+# ================= 登录逻辑（已修复 Authorization） =================
 def login_with_playwright(page):
-    """处理登录逻辑，优先使用Cookie，失败则使用邮箱密码。"""
-    remember_web_cookie = os.environ.get('PTERODACTYL_COOKIE')
-    pterodactyl_email = os.environ.get('PTERODACTYL_EMAIL')
-    pterodactyl_password = os.environ.get('PTERODACTYL_PASSWORD')
+    remember_web_cookie = os.environ.get("PTERODACTYL_COOKIE")
+    email = os.environ.get("PTERODACTYL_EMAIL")
+    password = os.environ.get("PTERODACTYL_PASSWORD")
 
+    # ---------- Cookie 登录 ----------
     if remember_web_cookie:
         print("检测到 PTERODACTYL_COOKIE，尝试使用 Cookie 登录...")
-        session_cookie = {
-            'name': COOKIE_NAME, 'value': remember_web_cookie, 'domain': '.panel.godlike.host',
-            'path': '/', 'expires': int(time.time()) + 3600 * 24 * 365, 'httpOnly': True,
-            'secure': True, 'sameSite': 'Lax'
-        }
-        page.context.add_cookies([session_cookie])
-        print(f"已设置 Cookie。正在访问目标服务器页面: {SERVER_URL}")
-        page.goto(SERVER_URL, wait_until="domcontentloaded")
-        
-        if "auth/login" in page.url:
-            print("Cookie 登录失败或会话已过期，将回退到邮箱密码登录。")
-            page.context.clear_cookies()
-        else:
-            print("Cookie 登录成功！")
+        page.context.add_cookies([{
+            "name": COOKIE_NAME,
+            "value": remember_web_cookie,
+            "domain": ".panel.godlike.host",
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+        }])
+
+        page.goto(SERVER_URL, wait_until="networkidle")
+        page.wait_for_timeout(3000)
+
+        # 🔑 关键：Authorization 页面
+        auth_span = page.locator('span:has-text("Authorization")')
+        if auth_span.count() > 0:
+            print("检测到 Authorization，正在点击...")
+            auth_span.locator("xpath=ancestor::button").click()
+            page.wait_for_url("**/server/**", timeout=60000)
+            page.wait_for_timeout(3000)
+
+        if "/server/" in page.url:
+            print("✅ Cookie + Authorization 登录成功")
             return True
 
-    if not (pterodactyl_email and pterodactyl_password):
-        print("错误: Cookie 无效或未提供，且未提供 PTERODACTYL_EMAIL 和 PTERODACTYL_PASSWORD。无法登录。", flush=True)
+        print("Cookie 登录失败，回退到账号密码登录")
+        page.context.clear_cookies()
+
+    # ---------- 账号密码登录 ----------
+    if not email or not password:
+        print("❌ 无法登录：未提供邮箱或密码")
         return False
 
-    print("正在尝试使用邮箱和密码登录...")
-    page.goto(LOGIN_URL, wait_until="domcontentloaded")
-    try:
-        print("正在点击 'Through login/password'...")
-        page.locator('a:has-text("Through login/password")').click()
-        
-        email_selector = 'input[name="username"]'
-        password_selector = 'input[name="password"]'
-        login_button_selector = 'button[type="submit"]:has-text("Login")'
-        
-        print("等待登录表单元素加载...")
-        page.wait_for_selector(email_selector)
-        page.wait_for_selector(password_selector)
-        print("正在填写邮箱和密码...")
-        page.fill(email_selector, pterodactyl_email)
-        page.fill(password_selector, pterodactyl_password)
-        print("正在点击登录按钮...")
-        with page.expect_navigation(wait_until="domcontentloaded"):
-            page.click(login_button_selector)
-        
-        if "auth/login" in page.url:
-            print("邮箱密码登录失败，请检查凭据是否正确。", flush=True)
-            page.screenshot(path="login_fail_error.png")
-            return False
-        
-        print("邮箱密码登录成功！")
-        return True
-    except Exception as e:
-        print(f"邮箱密码登录过程中发生错误: {e}", flush=True)
-        page.screenshot(path="login_process_error.png")
-        return False
+    page.goto(LOGIN_URL, wait_until="networkidle")
+    page.locator('a:has-text("Through login/password")').click()
 
+    page.fill('input[name="username"]', email)
+    page.fill('input[name="password"]', password)
+
+    with page.expect_navigation(wait_until="networkidle"):
+        page.click('button[type="submit"]')
+
+    return "/server/" in page.url
+
+# ================= 增加时长任务（已修复选择器） =================
 def add_time_task(page):
-    """执行一次增加服务器时长的任务（含 Authorization）。"""
     try:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行增加时长任务...")
+        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始增加时长")
 
-        if page.url != SERVER_URL:
-            print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
-            page.goto(SERVER_URL, wait_until="networkidle")
-            page.wait_for_timeout(8000)
+        page.goto(SERVER_URL, wait_until="networkidle")
+        page.wait_for_timeout(5000)
 
-        # ===== 步骤0：点击 Authorization =====
-        print("步骤0: 查找并点击 'Authorization' 按钮...")
-
-        auth_locator = page.locator('span:has-text("Authorization")')
-        if auth_locator.count() > 0:
-            auth_button = auth_locator.locator('xpath=ancestor::button')
-            auth_button.wait_for(state="visible", timeout=30000)
-            auth_button.click()
-            print("...已点击 'Authorization'")
-
-            # 授权后通常会有一次重新渲染
-            page.wait_for_timeout(5000)
-        else:
-            print("未发现 Authorization 按钮，可能已授权，继续执行。")
-
-        # ===== 步骤1：点击 Add 90 minutes =====
-        print("步骤1: 查找并点击 'Add 90 minutes' 按钮...")
-
+        # ---------- Add 90 minutes ----------
+        print("查找 Add 90 minutes...")
         found = False
-        for _ in range(18):  # 最多等 90 秒
-            add_locator = page.locator('span:has-text("Add 90 minutes")')
-            if add_locator.count() > 0:
-                add_button = add_locator.locator('xpath=ancestor::button')
-                add_button.click()
-                print("...已点击 'Add 90 minutes'")
+        for _ in range(18):  # 最多 90 秒
+            span = page.locator('span:has-text("Add 90 minutes")')
+            if span.count() > 0:
+                span.locator("xpath=ancestor::button").click()
+                print("✅ 已点击 Add 90 minutes")
                 found = True
                 break
             time.sleep(5)
 
         if not found:
-            raise PlaywrightTimeoutError("Add 90 minutes 按钮未出现")
+            raise PlaywrightTimeoutError("Add 90 minutes 未出现")
 
-        # ===== 步骤2：点击 Watch advertisment =====
-        print("步骤2: 查找并点击 'Watch advertisment' 按钮...")
-        watch_ad_selector = 'button:has-text("Watch advertisment")'
-        page.locator(watch_ad_selector).wait_for(state='visible', timeout=30000)
-        page.locator(watch_ad_selector).click()
-        print("...已点击 'Watch advertisment'")
+        # ---------- Watch advertisment ----------
+        print("查找 Watch advertisment...")
+        page.locator('button:has-text("Watch advertisment")') \
+            .wait_for(state="visible", timeout=30000)
+        page.locator('button:has-text("Watch advertisment")').click()
+        print("✅ 已点击 Watch advertisment")
 
-        # ===== 步骤3：固定等待 =====
-        print("步骤3: 开始固定等待2分钟...")
+        # ---------- 固定等待 ----------
+        print("等待 2 分钟...")
         time.sleep(120)
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ 已等待2分钟，默认任务完成。")
 
         return True
 
-    except PlaywrightTimeoutError as e:
-        print(f"❌ 任务执行超时: {e}", flush=True)
-        page.screenshot(path="task_element_timeout_error.png")
-        return False
-
     except Exception as e:
-        print(f"❌ 任务执行过程中发生未知错误: {e}", flush=True)
-        page.screenshot(path="task_general_error.png")
+        print(f"❌ 增加时长失败: {e}")
+        page.screenshot(path="task_error.png")
         return False
 
-
-
+# ================= 主程序 =================
 def main():
-    """
-    主函数，执行一次登录和一次任务，然后退出。
-    """
-    print("启动自动化任务（单次运行, 固定等待模式）...", flush=True)
+    print("启动自动化任务...")
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_default_timeout(60000)
-        print("浏览器启动成功。", flush=True)
 
         try:
-            # 步骤1: 登录
             if not login_with_playwright(page):
-                print("登录失败，程序终止。", flush=True)
-                exit(1)
+                print("❌ 登录失败")
+                return
 
-            # 步骤2: 执行增加时长的核心任务 (带超时监控)
-            if os.name != 'nt':
+            if os.name != "nt":
                 signal.alarm(TASK_TIMEOUT_SECONDS)
-            
-            print("\n----------------------------------------------------")
+
             success = add_time_task(page)
-            
-            if os.name != 'nt':
+
+            if os.name != "nt":
                 signal.alarm(0)
 
-            if success:
-                print("本轮任务成功完成。", flush=True)
-            else:
-                print("本轮任务失败。", flush=True)
-                exit(1)
+            print("🎉 任务完成" if success else "❌ 任务失败")
 
-        except TaskTimeoutError as e:
-            print(f"🔥🔥🔥 任务强制超时（{TASK_TIMEOUT_SECONDS}秒）！🔥🔥🔥", flush=True)
-            print(f"错误信息: {e}", flush=True)
-            page.screenshot(path="task_force_timeout_error.png")
-            exit(1)
-        except Exception as e:
-            print(f"主程序发生严重错误: {e}", flush=True)
-            page.screenshot(path="main_critical_error.png")
-            exit(1)
         finally:
-            print("关闭浏览器，程序结束。", flush=True)
             browser.close()
 
 if __name__ == "__main__":
     main()
-    print("脚本执行完毕。")
-    exit(0)
