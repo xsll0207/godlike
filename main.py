@@ -88,22 +88,21 @@ def add_time_task(page):
     """执行一次增加服务器时长的任务。"""
     try:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行增加时长任务...")
-        
+
         if page.url != SERVER_URL:
             print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
             page.goto(SERVER_URL, wait_until="domcontentloaded")
 
         print("步骤1: 查找并点击 'Add 90 minutes' 按钮...")
 
-add_button = page.locator(
-    'span:has-text("Add 90 minutes")'
-).locator('xpath=ancestor::button')
+        add_button = page.locator(
+            'span:has-text("Add 90 minutes")'
+        ).locator('xpath=ancestor::button')
 
-add_button.wait_for(state="visible", timeout=30000)
-add_button.click()
+        add_button.wait_for(state="visible", timeout=30000)
+        add_button.click()
 
-print("...已点击 'Add 90 minutes'")
-
+        print("...已点击 'Add 90 minutes'")
 
         watch_ad_selector = 'button:has-text("Watch advertisment")'
         print("步骤2: 查找并点击 'Watch advertisment' 按钮...")
@@ -111,22 +110,22 @@ print("...已点击 'Add 90 minutes'")
         page.locator(watch_ad_selector).click()
         print("...已点击 'Watch advertisment'。")
 
-        # 【【【 核心修改点在这里 】】】
-        # 不再等待成功提示，而是直接固定等待2分钟。
         print("步骤3: 开始固定等待2分钟...")
-        time.sleep(120)  # 等待 2 分钟 (120 秒)
+        time.sleep(120)
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ 已等待2分钟，默认任务完成。")
-        
+
         return True
 
-    except PlaywrightTimeoutError as e:
-        print(f"❌ 任务执行超时: 未在规定时间内找到元素。请检查选择器或页面是否已更改。", flush=True)
+    except PlaywrightTimeoutError:
+        print("❌ 任务执行超时: 未在规定时间内找到元素。", flush=True)
         page.screenshot(path="task_element_timeout_error.png")
         return False
+
     except Exception as e:
         print(f"❌ 任务执行过程中发生未知错误: {e}", flush=True)
         page.screenshot(path="task_general_error.png")
         return False
+
 
 def main():
     """
