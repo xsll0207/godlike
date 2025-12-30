@@ -20,7 +20,7 @@ def timeout_handler(signum, frame):
 if os.name != "nt":
     signal.signal(signal.SIGALRM, timeout_handler)
 
-# ================= 登录逻辑（含 Authorization） =================
+# ================= 登录逻辑（最终稳定版） =================
 def login_with_playwright(page):
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     email = os.environ.get("PTERODACTYL_EMAIL")
@@ -42,7 +42,7 @@ def login_with_playwright(page):
         page.goto(SERVER_URL, wait_until="networkidle")
         page.wait_for_timeout(3000)
 
-        # ---------- Authorization（OAuth） ----------
+        # ---------- Authorization ----------
         auth_span = page.locator('span:has-text("Authorization")')
         if auth_span.count() > 0:
             print("检测到 Authorization，正在点击...")
@@ -51,15 +51,20 @@ def login_with_playwright(page):
             print("等待 OAuth 授权完成...")
             for _ in range(18):  # 最多 90 秒
                 time.sleep(5)
-                if "/server/" in page.url:
-                    page.wait_for_timeout(3000)
+
+                # ✅ 判断 1：Authorization 按钮消失
+                if page.locator('span:has-text("Authorization")').count() == 0:
                     print("✅ OAuth 授权完成")
-                    return True
+                    break
+            else:
+                raise PlaywrightTimeoutError("OAuth 授权超时")
 
-            raise PlaywrightTimeoutError("OAuth 授权超时")
+        # 再次确认能访问 server 页面
+        page.goto(SERVER_URL, wait_until="networkidle")
+        page.wait_for_timeout(3000)
 
-        if "/server/" in page.url:
-            print("✅ Cookie 登录成功")
+        if page.locator('span:has-text("Add 90 minutes")').count() > 0:
+            print("✅ 登录成功（服务器页面可访问）")
             return True
 
         print("Cookie 登录失败，回退账号密码登录")
@@ -80,7 +85,10 @@ def login_with_playwright(page):
     with page.expect_navigation(wait_until="networkidle"):
         page.click('button[type="submit"]')
 
-    return "/server/" in page.url
+    page.goto(SERVER_URL, wait_until="networkidle")
+    page.wait_for_timeout(3000)
+
+    return page.locator('span:has-text("Add 90 minutes")').count() > 0
 
 # ================= 增加时长任务 =================
 def add_time_task(page):
@@ -90,9 +98,8 @@ def add_time_task(page):
         page.goto(SERVER_URL, wait_until="networkidle")
         page.wait_for_timeout(5000)
 
-        # ---------- Add 90 minutes ----------
         print("查找 Add 90 minutes...")
-        for _ in range(18):  # 最多 90 秒
+        for _ in range(18):
             span = page.locator('span:has-text("Add 90 minutes")')
             if span.count() > 0:
                 span.locator("xpath=ancestor::button").click()
@@ -102,14 +109,12 @@ def add_time_task(page):
         else:
             raise PlaywrightTimeoutError("Add 90 minutes 未出现")
 
-        # ---------- Watch advertisment ----------
         print("查找 Watch advertisment...")
         page.locator('button:has-text("Watch advertisment")') \
             .wait_for(state="visible", timeout=30000)
         page.locator('button:has-text("Watch advertisment")').click()
         print("✅ 已点击 Watch advertisment")
 
-        # ---------- 固定等待 ----------
         print("等待 2 分钟...")
         time.sleep(120)
 
