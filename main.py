@@ -10,20 +10,12 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 # ================= 基础配置 =================
 SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
+LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
 SCREENSHOT_DIR = "screenshots"
 SCREENSHOT_ZIP = "screenshots.zip"
 TASK_TIMEOUT_SECONDS = 300
-
-# ================= GitHub 配置 =================
-REPO = os.environ.get("GITHUB_REPOSITORY")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-GITHUB_API = "https://api.github.com"
-TAG = f"screenshots-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-
-if not GITHUB_TOKEN:
-    raise RuntimeError("❌ 未检测到 GITHUB_TOKEN")
 
 # ================= 超时控制 =================
 class TaskTimeoutError(Exception):
@@ -56,50 +48,77 @@ def zip_screenshots():
             zf.write(os.path.join(SCREENSHOT_DIR, f), arcname=f)
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= Godlike 登录（非 headless） =================
+# ================= 登录逻辑（最稳） =================
 def login_with_playwright(page):
+    """
+    登录策略：
+    1. 尝试 Cookie + OAuth
+    2. 如果未真正进入 /server/ → 自动走账号密码登录
+    """
+
+    # ---------- Step 1: Cookie + OAuth ----------
     cookie = os.environ.get("PTERODACTYL_COOKIE")
-    if not cookie:
-        raise Exception("未提供 PTERODACTYL_COOKIE")
+    if cookie:
+        print("🔐 尝试 Cookie + OAuth 登录...", flush=True)
+        page.context.add_cookies([{
+            "name": COOKIE_NAME,
+            "value": cookie,
+            "domain": ".panel.godlike.host",
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+        }])
 
-    page.context.add_cookies([{
-        "name": COOKIE_NAME,
-        "value": cookie,
-        "domain": ".panel.godlike.host",
-        "path": "/",
-        "httpOnly": True,
-        "secure": True,
-        "sameSite": "Lax",
-    }])
+        page.goto(SERVER_URL, wait_until="networkidle")
+        page.wait_for_timeout(3000)
+        take_screenshot(page, "01_after_open_server")
 
+        auth_btn = page.locator('span:has-text("Authorization")')
+        if auth_btn.count() > 0:
+            take_screenshot(page, "02_before_authorization")
+            print("➡️ 点击 Authorization...", flush=True)
+            auth_btn.locator("xpath=ancestor::button").click()
+
+            # 等 OAuth 回跳
+            for _ in range(18):
+                time.sleep(5)
+                if "/server/" in page.url:
+                    take_screenshot(page, "03_after_authorization")
+                    print("✅ OAuth 成功回到服务器页面", flush=True)
+                    return
+        else:
+            # 没出现 Authorization，但可能已登录
+            if "/server/" in page.url:
+                print("✅ Cookie 直接登录成功", flush=True)
+                return
+
+        print("⚠️ OAuth 未成功，回退账号密码登录", flush=True)
+
+    # ---------- Step 2: 账号密码登录 ----------
+    email = os.environ.get("PTERODACTYL_EMAIL")
+    password = os.environ.get("PTERODACTYL_PASSWORD")
+    if not email or not password:
+        raise Exception("❌ OAuth 失败，且未提供账号密码")
+
+    print("🔑 使用账号密码登录...", flush=True)
+    page.goto(LOGIN_URL, wait_until="networkidle")
+    take_screenshot(page, "LOGIN_PAGE")
+
+    page.fill('input[name="username"]', email)
+    page.fill('input[name="password"]', password)
+    page.click('button[type="submit"]')
+
+    # 强制跳转服务器页面
     page.goto(SERVER_URL, wait_until="networkidle")
     page.wait_for_timeout(3000)
-    take_screenshot(page, "01_after_open_server")
 
-    # 处理 Authorization
-    auth_span = page.locator('span:has-text("Authorization")')
-    if auth_span.count() > 0:
-        take_screenshot(page, "02_before_authorization")
-        auth_span.locator("xpath=ancestor::button").click()
-
-        print("🔑 已点击 Authorization，等待 OAuth 回跳...", flush=True)
-
-        # 给 OAuth 足够时间（非常重要）
-        for _ in range(30):  # 最多 150 秒
-            time.sleep(5)
-            if "/server/" in page.url:
-                break
-        else:
-            take_screenshot(page, "AUTH_NOT_RETURNED_TO_SERVER")
-            raise Exception("OAuth 未成功回到服务器页面")
-
-        page.wait_for_timeout(3000)
-        take_screenshot(page, "03_after_authorization")
-
-    # 最终校验（硬性）
     if "/server/" not in page.url:
-        take_screenshot(page, "LOGIN_FAILED_FINAL_CHECK")
-        raise Exception("最终校验失败：仍未进入服务器面板")
+        take_screenshot(page, "LOGIN_FAILED")
+        raise Exception("❌ 账号密码登录失败")
+
+    take_screenshot(page, "LOGIN_SUCCESS")
+    print("✅ 账号密码登录成功", flush=True)
 
 # ================= 增加时长任务 =================
 def add_time_task(page):
@@ -123,36 +142,22 @@ def add_time_task(page):
 
         time.sleep(5)
 
-    print("ℹ️ 当前不可加时（未出现 Add 90 minutes）", flush=True)
+    # 业务不可用（不是异常）
+    print("ℹ️ 当前不可加时，跳过本轮", flush=True)
     skip_img = take_screenshot(page, "07_add_90_not_available")
     return [before_img, skip_img]
 
 # ================= 主程序 =================
 def main():
+    print("🚀 启动 Godlike 自动加时任务", flush=True)
     ensure_dir(SCREENSHOT_DIR)
 
     with sync_playwright() as p:
-        # 🔥 关键：非 headless + 反自动化参数
         browser = p.chromium.launch(
-            headless=False,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage"
-            ]
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"]
         )
-
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            locale="en-US"
-        )
-
-        page = context.new_page()
+        page = browser.new_page()
         page.set_default_timeout(60000)
 
         try:
@@ -165,16 +170,18 @@ def main():
             if os.name != "nt":
                 signal.alarm(0)
 
-        except Exception:
+        except Exception as e:
+            print(f"❌ 任务失败: {e}", flush=True)
             take_screenshot(page, "99_error")
             zip_screenshots()
             browser.close()
-            raise
+            exit(1)
 
         finally:
             browser.close()
 
     zip_screenshots()
+    print("🎉 本轮任务结束", flush=True)
 
 if __name__ == "__main__":
     main()
