@@ -10,7 +10,6 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 # ================= 基础配置 =================
 SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
-LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
 SCREENSHOT_DIR = "screenshots"
@@ -101,7 +100,7 @@ def upload_asset(upload_url, filepath):
     urllib.request.urlopen(req)
     return f"https://github.com/{REPO}/releases/download/{TAG}/{name}"
 
-# ================= 禁止重定向（关键） =================
+# ================= 禁止重定向 =================
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -171,18 +170,21 @@ def add_time_task(page):
         if span.count() > 0:
             span.locator("xpath=ancestor::button").click()
             after_img = take_screenshot(page, "05_after_click_add_90_minutes")
-            break
+
+            page.locator('button:has-text("Watch advertisment")').click()
+            final_img = take_screenshot(page, "06_after_click_watch_ad")
+
+            print("等待 2 分钟...", flush=True)
+            time.sleep(120)
+
+            return [before_img, after_img, final_img]
+
         time.sleep(5)
-    else:
-        raise PlaywrightTimeoutError("Add 90 minutes 未出现")
 
-    page.locator('button:has-text("Watch advertisment")').click()
-    final_img = take_screenshot(page, "06_after_click_watch_ad")
-
-    print("等待 2 分钟...", flush=True)
-    time.sleep(120)
-
-    return [before_img, after_img, final_img]
+    # ⭐ 业务不可用分支（不是异常）
+    print("ℹ️ 当前不可加时（未出现 Add 90 minutes），跳过本轮", flush=True)
+    skip_img = take_screenshot(page, "07_add_90_not_available")
+    return [before_img, skip_img]
 
 # ================= 主程序 =================
 def main():
@@ -204,7 +206,7 @@ def main():
             if os.name != "nt":
                 signal.alarm(0)
 
-        except Exception as e:
+        except Exception:
             take_screenshot(page, "99_error")
             zip_screenshots()
             browser.close()
