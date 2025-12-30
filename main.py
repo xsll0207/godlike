@@ -44,9 +44,6 @@ def login_with_playwright(page):
         if "auth/login" in page.url:
             print("Cookie 登录失败或会话已过期，将回退到邮箱密码登录。")
             page.context.clear_cookies()
-        else:
-            print("Cookie 登录成功！")
-            return True
 else:
     print("Cookie 登录成功！")
 
@@ -112,39 +109,63 @@ with open("debug_page.html", "w", encoding="utf-8") as f:
 print("🔍 已导出 debug_page.html")
 
 def add_time_task(page):
-    """执行一次增加服务器时长的任务。"""
+    """执行一次增加服务器时长的任务（含 Authorization）。"""
     try:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行增加时长任务...")
 
         if page.url != SERVER_URL:
             print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
-            page.goto(SERVER_URL, wait_until="domcontentloaded")
+            page.goto(SERVER_URL, wait_until="networkidle")
+            page.wait_for_timeout(8000)
 
+        # ===== 步骤0：点击 Authorization =====
+        print("步骤0: 查找并点击 'Authorization' 按钮...")
+
+        auth_locator = page.locator('span:has-text("Authorization")')
+        if auth_locator.count() > 0:
+            auth_button = auth_locator.locator('xpath=ancestor::button')
+            auth_button.wait_for(state="visible", timeout=30000)
+            auth_button.click()
+            print("...已点击 'Authorization'")
+
+            # 授权后通常会有一次重新渲染
+            page.wait_for_timeout(5000)
+        else:
+            print("未发现 Authorization 按钮，可能已授权，继续执行。")
+
+        # ===== 步骤1：点击 Add 90 minutes =====
         print("步骤1: 查找并点击 'Add 90 minutes' 按钮...")
 
-        add_button = page.locator(
-            'span:has-text("Add 90 minutes")'
-        ).locator('xpath=ancestor::button')
+        found = False
+        for _ in range(18):  # 最多等 90 秒
+            add_locator = page.locator('span:has-text("Add 90 minutes")')
+            if add_locator.count() > 0:
+                add_button = add_locator.locator('xpath=ancestor::button')
+                add_button.click()
+                print("...已点击 'Add 90 minutes'")
+                found = True
+                break
+            time.sleep(5)
 
-        add_button.wait_for(state="visible", timeout=30000)
-        add_button.click()
+        if not found:
+            raise PlaywrightTimeoutError("Add 90 minutes 按钮未出现")
 
-        print("...已点击 'Add 90 minutes'")
-
-        watch_ad_selector = 'button:has-text("Watch advertisment")'
+        # ===== 步骤2：点击 Watch advertisment =====
         print("步骤2: 查找并点击 'Watch advertisment' 按钮...")
+        watch_ad_selector = 'button:has-text("Watch advertisment")'
         page.locator(watch_ad_selector).wait_for(state='visible', timeout=30000)
         page.locator(watch_ad_selector).click()
-        print("...已点击 'Watch advertisment'。")
+        print("...已点击 'Watch advertisment'")
 
+        # ===== 步骤3：固定等待 =====
         print("步骤3: 开始固定等待2分钟...")
         time.sleep(120)
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ 已等待2分钟，默认任务完成。")
 
         return True
 
-    except PlaywrightTimeoutError:
-        print("❌ 任务执行超时: 未在规定时间内找到元素。", flush=True)
+    except PlaywrightTimeoutError as e:
+        print(f"❌ 任务执行超时: {e}", flush=True)
         page.screenshot(path="task_element_timeout_error.png")
         return False
 
@@ -152,6 +173,7 @@ def add_time_task(page):
         print(f"❌ 任务执行过程中发生未知错误: {e}", flush=True)
         page.screenshot(path="task_general_error.png")
         return False
+
 
 
 def main():
