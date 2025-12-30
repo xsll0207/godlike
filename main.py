@@ -1,3 +1,26 @@
+import os
+import time
+import signal
+from datetime import datetime
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+# ================= 配置 =================
+SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
+LOGIN_URL = "https://panel.godlike.host/auth/login"
+COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
+TASK_TIMEOUT_SECONDS = 300  # 5 分钟
+
+# ================= 超时控制 =================
+class TaskTimeoutError(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TaskTimeoutError("任务执行时间超过设定阈值")
+
+if os.name != "nt":
+    signal.signal(signal.SIGALRM, timeout_handler)
+
+# ================= 登录逻辑（最终稳定版） =================
 def login_with_playwright(page):
     cookie = os.environ.get("PTERODACTYL_COOKIE")
     email = os.environ.get("PTERODACTYL_EMAIL")
@@ -19,7 +42,7 @@ def login_with_playwright(page):
         page.goto(SERVER_URL, wait_until="networkidle")
         page.wait_for_timeout(3000)
 
-        # Authorization
+        # Authorization（如果存在）
         auth_span = page.locator('span:has-text("Authorization")')
         if auth_span.count() > 0:
             print("检测到 Authorization，正在点击...")
@@ -34,11 +57,11 @@ def login_with_playwright(page):
             else:
                 raise PlaywrightTimeoutError("OAuth 授权超时")
 
-        # ⭐ 关键修复点：OAuth 成功后直接认为登录成功
+        # ⭐ 关键：OAuth 完成后直接认为登录成功
         print("✅ 已通过 Cookie + OAuth 登录")
         return True
 
-    # ---------- 账号密码登录（只有 Cookie 不存在时才会走） ----------
+    # ---------- 账号密码登录（仅在没有 Cookie 时） ----------
     if not email or not password:
         print("❌ 无法登录：未提供邮箱或密码")
         return False
@@ -46,7 +69,6 @@ def login_with_playwright(page):
     print("使用邮箱密码登录...")
     page.goto(LOGIN_URL, wait_until="networkidle")
 
-    # 防止元素不存在直接点击
     login_tab = page.locator('a:has-text("Through login/password")')
     if login_tab.count() > 0:
         login_tab.click()
@@ -57,4 +79,74 @@ def login_with_playwright(page):
     with page.expect_navigation(wait_until="networkidle"):
         page.click('button[type="submit"]')
 
+    print("✅ 邮箱密码登录完成")
     return True
+
+# ================= 增加时长任务 =================
+def add_time_task(page):
+    try:
+        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始执行增加时长任务")
+
+        page.goto(SERVER_URL, wait_until="networkidle")
+        page.wait_for_timeout(5000)
+
+        # ---------- Add 90 minutes ----------
+        print("查找 Add 90 minutes...")
+        for _ in range(18):  # 最多 90 秒
+            span = page.locator('span:has-text("Add 90 minutes")')
+            if span.count() > 0:
+                span.locator("xpath=ancestor::button").click()
+                print("✅ 已点击 Add 90 minutes")
+                break
+            time.sleep(5)
+        else:
+            raise PlaywrightTimeoutError("Add 90 minutes 未出现")
+
+        # ---------- Watch advertisment ----------
+        print("查找 Watch advertisment...")
+        page.locator('button:has-text("Watch advertisment")') \
+            .wait_for(state="visible", timeout=30000)
+        page.locator('button:has-text("Watch advertisment")').click()
+        print("✅ 已点击 Watch advertisment")
+
+        # ---------- 固定等待 ----------
+        print("等待 2 分钟...")
+        time.sleep(120)
+
+        return True
+
+    except Exception as e:
+        print(f"❌ 增加时长失败: {e}")
+        page.screenshot(path="task_error.png")
+        return False
+
+# ================= 主程序 =================
+def main():
+    print("启动自动化任务...")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_default_timeout(60000)
+
+        try:
+            if not login_with_playwright(page):
+                print("❌ 登录失败")
+                return
+
+            if os.name != "nt":
+                signal.alarm(TASK_TIMEOUT_SECONDS)
+
+            success = add_time_task(page)
+
+            if os.name != "nt":
+                signal.alarm(0)
+
+            print("🎉 本轮任务完成" if success else "❌ 本轮任务失败")
+
+        finally:
+            browser.close()
+            print("浏览器已关闭，程序结束")
+
+# ================= 入口 =================
+if __name__ == "__main__":
+    main()
