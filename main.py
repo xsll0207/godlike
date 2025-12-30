@@ -3,7 +3,7 @@ import time
 import signal
 import zipfile
 from datetime import datetime
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 # ================= 配置 =================
 SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
@@ -45,99 +45,65 @@ def zip_screenshots():
             zf.write(os.path.join(SCREENSHOT_DIR, f), arcname=f)
     print(f"📦 已生成 {SCREENSHOT_ZIP}", flush=True)
 
-# ================= 登录逻辑 =================
-def login_with_playwright(page):
-    """
-    顺序：
-    1. Cookie + OAuth
-    2. OAuth 失败 → Clientarea 账号密码（继续尝试）
-    """
-
-    cookie = os.environ.get("PTERODACTYL_COOKIE")
+# ================= 登录逻辑（仅账号密码） =================
+def login_with_password(page):
     email = os.environ.get("PTERODACTYL_EMAIL")
     password = os.environ.get("PTERODACTYL_PASSWORD")
+    if not email or not password:
+        raise Exception("未提供账号密码")
 
-    if not cookie:
-        raise Exception("未提供 PTERODACTYL_COOKIE")
-
-    # ---------- Cookie + OAuth ----------
-    print("🔐 尝试 Cookie + OAuth 登录...", flush=True)
-    page.context.add_cookies([{
-        "name": COOKIE_NAME,
-        "value": cookie,
-        "domain": ".panel.godlike.host",
-        "path": "/",
-        "httpOnly": True,
-        "secure": True,
-        "sameSite": "Lax",
-    }])
+    # 先注入 cookie（如果有，能省一步）
+    cookie = os.environ.get("PTERODACTYL_COOKIE")
+    if cookie:
+        page.context.add_cookies([{
+            "name": COOKIE_NAME,
+            "value": cookie,
+            "domain": ".panel.godlike.host",
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+        }])
 
     page.goto(SERVER_URL, wait_until="networkidle")
-    page.wait_for_timeout(3000)
-    shot(page, "01_after_open_server")
-
-    auth = page.locator('span:has-text("Authorization")')
-    if auth.count() > 0:
-        shot(page, "02_before_authorization")
-        auth.locator("xpath=ancestor::button").click()
-        print("➡️ 点击 Authorization", flush=True)
-
-        for _ in range(10):
-            time.sleep(2)
-            if "/server/" in page.url:
-                shot(page, "03_after_authorization")
-                print("✅ OAuth 成功", flush=True)
-                return
-
-    print("⚠️ OAuth 未成功，进入 Clientarea 账号密码流程", flush=True)
-
-    # ---------- Clientarea 登录 ----------
-    if not email or not password:
-        raise Exception("未提供账号密码，无法继续")
-
-    page.goto(LOGIN_URL, wait_until="networkidle")
     page.wait_for_timeout(2000)
-    shot(page, "LOGIN_PAGE")
+    shot(page, "01_open_server")
 
-    # 切换到 Through login/password（如果存在）
-    switch = page.locator('text=Through login/password')
-    if switch.count() > 0:
-        switch.click()
-        time.sleep(500)
+    # 如果已经进 server，直接成功
+    if "/server/" in page.url:
+        print("✅ 已通过 Cookie 登录", flush=True)
+        return
 
-    # 多次尝试填写 & 提交
-    for attempt in range(1, 4):
-        print(f"🔁 Clientarea 登录尝试 {attempt}/3", flush=True)
+    # 等账号密码输入框
+    page.wait_for_selector('input', timeout=20000)
 
-        try:
-            page.wait_for_selector('input[name="email"]', state="visible", timeout=15000)
-            page.wait_for_selector('input[name="password"]', state="visible", timeout=15000)
+    # 严格定位字段（按你截图）
+    user_input = page.locator('input[type="text"], input[type="email"]').first
+    pass_input = page.locator('input[type="password"]').first
+    login_btn = page.locator('button:has-text("Login")')
 
-            page.locator('input[name="email"]').scroll_into_view_if_needed()
+    if user_input.count() == 0 or pass_input.count() == 0:
+        shot(page, "LOGIN_FORM_NOT_FOUND")
+        raise Exception("未找到账号密码表单")
 
-            page.fill('input[name="email"]', email)
-            page.fill('input[name="password"]', password)
+    user_input.fill(email)
+    pass_input.fill(password)
 
-            page.locator('button:has-text("Login")').click(force=True)
+    shot(page, "02_before_login_submit")
+    login_btn.click(force=True)
 
-            time.sleep(3)
-            shot(page, f"LOGIN_SUBMIT_{attempt}")
+    page.wait_for_timeout(3000)
 
-            page.goto(SERVER_URL, wait_until="networkidle")
-            time.sleep(2)
+    # 强制回 server 页面
+    page.goto(SERVER_URL, wait_until="networkidle")
+    page.wait_for_timeout(2000)
 
-            if "/server/" in page.url:
-                shot(page, "LOGIN_SUCCESS")
-                print("✅ Clientarea 登录成功", flush=True)
-                return
+    if "/server/" not in page.url:
+        shot(page, "LOGIN_FAILED")
+        raise Exception("账号密码登录失败")
 
-        except Exception as e:
-            print(f"⚠️ 第 {attempt} 次登录异常: {e}", flush=True)
-
-        time.sleep(3)
-
-    shot(page, "LOGIN_FAILED")
-    raise Exception("Clientarea 账号密码登录失败（多次尝试后）")
+    shot(page, "03_login_success")
+    print("✅ 账号密码登录成功", flush=True)
 
 # ================= 加时逻辑 =================
 def add_time_task(page):
@@ -162,7 +128,7 @@ def add_time_task(page):
 
 # ================= 主程序 =================
 def main():
-    print("🚀 启动 Godlike 自动加时任务", flush=True)
+    print("🚀 启动 Godlike 自动加时任务（直登账号密码）", flush=True)
     ensure_dir(SCREENSHOT_DIR)
 
     with sync_playwright() as p:
@@ -181,7 +147,7 @@ def main():
             if os.name != "nt":
                 signal.alarm(TASK_TIMEOUT_SECONDS)
 
-            login_with_playwright(page)
+            login_with_password(page)
             add_time_task(page)
 
             if os.name != "nt":
