@@ -110,23 +110,19 @@ def login_with_playwright(page):
         print(f"🔁 Clientarea 登录尝试 {attempt}/3", flush=True)
 
         try:
-            # 等字段真正可见
             page.wait_for_selector('input[name="email"]', state="visible", timeout=15000)
             page.wait_for_selector('input[name="password"]', state="visible", timeout=15000)
 
-            # 滚动到表单
             page.locator('input[name="email"]').scroll_into_view_if_needed()
 
             page.fill('input[name="email"]', email)
             page.fill('input[name="password"]', password)
 
-            # 强制点击 Login
             page.locator('button:has-text("Login")').click(force=True)
 
             time.sleep(3)
             shot(page, f"LOGIN_SUBMIT_{attempt}")
 
-            # 强制返回服务器页面
             page.goto(SERVER_URL, wait_until="networkidle")
             time.sleep(2)
 
@@ -140,7 +136,6 @@ def login_with_playwright(page):
 
         time.sleep(3)
 
-    # 走到这里说明失败
     shot(page, "LOGIN_FAILED")
     raise Exception("Clientarea 账号密码登录失败（多次尝试后）")
 
@@ -167,7 +162,7 @@ def add_time_task(page):
 
 # ================= 主程序 =================
 def main():
-    print Counting on your patience, let's push this further.
+    print("🚀 启动 Godlike 自动加时任务", flush=True)
     ensure_dir(SCREENSHOT_DIR)
 
     with sync_playwright() as p:
