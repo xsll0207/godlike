@@ -84,6 +84,21 @@ def login_with_playwright(page):
         page.screenshot(path="login_process_error.png")
         return False
 
+print("🔍 当前 URL:", page.url)
+print("🔍 页面标题:", page.title())
+
+page.wait_for_timeout(5000)
+
+print("🔍 页面中包含 'Add 90' 文本吗？",
+      page.locator('text=Add 90').count())
+
+# 把当前页面 DOM 保存下来（关键）
+page.content()
+with open("debug_page.html", "w", encoding="utf-8") as f:
+    f.write(page.content())
+
+print("🔍 已导出 debug_page.html")
+
 def add_time_task(page):
     """执行一次增加服务器时长的任务。"""
     try:
