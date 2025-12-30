@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
   schedule:
+    # 每 90 分钟一次（UTC）
     - cron: '0 0,3,6,9,12,15,18,21 * * *'
     - cron: '30 1,4,7,10,13,16,19,22 * * *'
 
@@ -30,15 +31,17 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
+      # ================= 核心执行步骤 =================
       - name: Run Time Adder Script
-  env:
-    PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
-    PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
-    PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  run: python -u main.py
+        env:
+          PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
+          PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
+          PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # ✅ 关键：给 main.py 用
+        run: python -u main.py
 
-      # ✅【关键修改】始终上传 screenshots.zip
+      # ================= 上传截图产物 =================
+      # 始终上传 screenshots.zip（不管成功还是失败）
       - name: Upload screenshots artifact
         uses: actions/upload-artifact@v4
         with:
@@ -46,6 +49,7 @@ jobs:
           path: screenshots.zip
           if-no-files-found: warn
 
+      # ================= 成功后才提交 time.txt =================
       - name: Commit time.txt to repo
         if: success()
         env:
