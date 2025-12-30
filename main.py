@@ -88,10 +88,13 @@ def add_time_task(page):
         print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 开始执行增加时长任务")
 
         page.goto(SERVER_URL, wait_until="networkidle")
-        page.wait_for_timeout(5000)
+page.wait_for_timeout(5000)
 
-        # ---------- Add 90 minutes ----------
-        print("查找 Add 90 minutes...")
+# 📸 在查找 Add 90 minutes 之前截图
+page.screenshot(path="before_add_90_minutes.png")
+
+print("查找 Add 90 minutes...")
+
         for _ in range(18):  # 最多 90 秒
             span = page.locator('span:has-text("Add 90 minutes")')
             if span.count() > 0:
