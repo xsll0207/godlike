@@ -6,7 +6,7 @@ from datetime import datetime
 from playwright.sync_api import sync_playwright
 
 # ================= 配置 =================
-SERVER_URL = "https://panel.godlike.host/server/61b8ad3c"
+SERVER_URL = "https://panel.godlike.host/server/86ca9b9f"
 LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 
